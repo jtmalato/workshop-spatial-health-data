@@ -1,4 +1,4 @@
-# newproject
+# Spatial Data Science Using R
 
 The file structure is organized as such:
 
