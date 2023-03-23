@@ -1,0 +1,630 @@
+---
+output: 
+  bookdown::html_document2:
+    theme: flatly
+    css: "style.css"
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: no
+    number_sections: true
+    code_download: true
+    code_folding: show
+title: "Day 02"
+date: "Start: 23/03/2023"
+author:
+  name: Joao Malato
+  affiliation: Instituto de Medicina Molecular & Immune-Stats
+---
+
+# Libraries {-}
+
+
+```{r}
+library(here)
+library(data.table)
+library(magrittr)
+library(ggplot2)
+library(scales)
+library(colorspace)
+library(janitor)
+theme_set(theme_bw())
+```
+
+
+# Introduction
+
+- [link](https://www.paulamoraga.com/book-gds/21-spatial-intro.html)
+
+
+# Geostatistical data
+
+
+# Example of spatial interpolation
+
+- [link](https://www.paulamoraga.com/book-gds/41-geostatisticaldata-interpolation.html)
+
+## Look at the data
+
+- data: prices of appartments in Greece
+    - Spatial prediction of price properties in Athens, Greece
+
+```{r}
+library(spData)
+library(sf)
+library(terra)
+library(tmap)
+library(viridis)
+
+head(properties)
+
+d <- properties
+# price per square-meter
+d$vble <- d$prpsqm
+head(d)
+
+dt_p <- as.data.table(properties)
+dt_p[, vble := prpsqm]
+```
+
+```{r}
+# Map
+map <- st_union(depmunic) %>% 
+  st_sf()
+
+# Plot
+tmap_mode("view")
+tm_shape(map) + 
+  tm_polygons(alpha = 0.3) + 
+  tm_shape(d) + 
+  tm_dots("vble", palette = "viridis")
+
+library(ggthemes)
+d %>% 
+  ggplot(aes(geometry = geometry)) +
+  geom_sf(aes(color = vble), size = 2, alpha = 0.8) +
+  scale_color_continuous_sequential() +
+  theme_map()
+```
+
+## Prediction locations
+
+- We will create a raster grid that covers the map
+- 100 rows and 100 cols
+- _xyFromCell()_ is to get the x-y coordinates
+
+
+```{r}
+library(sf)
+library(terra)
+
+# raster grid covering map
+# grid <- terra::rast(map, nrows = 100, ncols = 100)
+# coordinates of all cells
+# xy <- terra::xyFromCell(grid, 1:ncell(grid))
+```
+
+- create an sf object (it's easier to work with)
+
+```{r}
+# transform points to an sf object
+coop <- st_as_sf(as.data.frame(xy), coords = c("x", "y"), crs = st_crs(map))
+# plot
+qtm(coop)
+
+
+# filter and keep only the location within the map
+coop <- st_filter(coop, map)
+# plot the grid around the map
+qtm(coop)
+```
+
+
+
+## Closest observation
+
+- [Voronoi diagram](https://en.wikipedia.org/wiki/Delaunay_triangulation)
+
+![Voronoi diagram](https://www.paulamoraga.com/book-gds/img/voronoidelaunay2.png)
+
+![Figure](https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Delaunay_Voronoi.svg/300px-Delaunay_Voronoi.svg.png)
+
+```{r}
+v <- terra::voronoi(x = terra::vect(d), bnd = map)
+# to sf format
+v <- st_as_sf(v)
+tm_shape(v) + 
+  tm_fill(col = "vble", palette = "viridis", alpha = 0.6)
+```
+
+- It's only a square, so we need to hev the nitersection between the limits and the predictions
+
+```{r}
+resp <- st_intersection(v, coop)
+resp$pred <- resp$vble
+
+# pred <- terra::rasterize(x = resp, y = grid, field = "pred", fun = "mean")
+# tm_shape(pred) + 
+#   tm_raster(alpha = 0.6, palette = "viridis")
+```
+
+Not working somehow...
+
+## Nearest neighbors interpolation
+
+- values at unsampled locations are estimated as the average of the values of the $k$ closest sampled locations
+
+```{r}
+library(gstat)
+
+# this is the simple form for the formula, the "set" argument is simply saying here that the weights are considered equal, considering the 5 nearest ("nmax") observations
+res <- gstat(formula = vble ~ 1, locations = d, nmax = 5, set = list(idp = 0))
+# prediction
+resp <- predict(res, coop)
+```
+
+```{r}
+resp$x <- st_coordinates(resp)[,1]
+resp$y <- st_coordinates(resp)[,2]
+resp$pred <- resp$var1.pred
+
+# pred <- terra::rasterize(resp, grid, field = "pred", fun = "mean")
+# tm_shape(pred) + tm_raster(alpha = 0.6, palette = "viridis")
+```
+
+- We could take into accound other variables
+    - age of building
+    - proximity to transportation
+    - etc
+
+## Inverse Distance Weighting (IDW)
+
+
+```{r}
+library(gstat)
+res <- gstat(formula = vble ~ 1, 
+             locations = d,
+             nmax = nrow(d), # use ALL the neighbors locations
+             set = list(idp = 1)) # beta = 1 
+```
+
+When $\beta = 1$, them the weights become $w_i = \frac{1/d_i}{\sum_{i}^{n} (1/d_i)}$, meaning that the weights are given according to the distance.
+
+```{r}
+resp <- predict(res, coop)
+```
+
+```{r}
+resp$x <- st_coordinates(resp)[,1]
+resp$y <- st_coordinates(resp)[,2]
+resp$pred <- resp$var1.pred
+
+# pred <- terra::rasterize(resp, grid, field = "pred", fun = "mean")
+# tm_shape(pred) + tm_raster(alpha = 0.6, palette = "viridis")
+```
+
+## Ensemble approach
+
+- Use predictions from other methods to get an estimated average of all
+- Assume equal or different weights
+- $\frac{prediction 1 + prediction 2 + prediction 3}{3}$
+
+```{r}
+# Voronoi
+v <- terra::voronoi(x = terra::vect(d), bnd = map)
+v <- st_as_sf(v)
+p1 <- st_intersection(v, coop)$vble
+```
+
+```{r}
+# Nearest neighbors
+nn <- gstat(formula = vble ~ 1, locations = d, nmax = 5, set = list(idp = 0))
+p2 <- predict(nn, coop)$var1.pred
+```
+
+```{r}
+# IDW
+gs <- gstat(formula = vble ~ 1, locations = d, nmax = nrow(d), set = list(idp = 1))
+p3 <- predict(gs, coop)$var1.pred
+```
+
+```{r}
+# Ensemble (equal weights)
+weights <- c(1/3, 1/3, 1/3)
+p4 <- (p1 * weights[1]) + (p2 * weights[2]) + (p3 * weights[3])
+```
+
+```{r}
+# Plot
+resp <- data.frame(
+  x = st_coordinates(coop)[, 1],
+  y = st_coordinates(coop)[, 2],
+  pred = p4)
+
+# Transform data.frame to sf object
+resp <- st_as_sf(resp, coords = c("x", "y"), crs = st_crs(map))
+
+# pred <- terra::rasterize(resp, grid, field = "pred", fun = "mean")
+# tm_shape(pred) + tm_raster(alpha = 0.6, palette = "viridis")
+```
+
+
+## Cross-validation
+
+![Cross-validation](https://www.paulamoraga.com/book-gds/img/kfoldCV.png)
+
+- If we want to take into account possible spatial correlation we could use the [`blockCV`](https://github.com/rvalavi/blockCV) package
+
+```{r}
+set.seed(123)
+
+# Function to calculate the RMSE
+RMSE <- function(observed, predicted) {
+  sqrt(mean((observed - predicted) ^ 2))
+}
+
+# Split data in 5 sets
+kf <- dismo::kfold(nrow(d), k = 5) # k-fold partitioning
+
+# Vectors where RMSE values obtained with each of the methods will be stored
+rmse1 <- rep(NA, 5) # Voronoi
+rmse2 <- rep(NA, 5) # Nearest neighbors
+rmse3 <- rep(NA, 5) # IDW
+rmse4 <- rep(NA, 5) # Ensemble
+
+for (k in 1:5) {
+  # Split data in test and train
+  test <- d[kf == k,]
+  train <- d[kf != k,]
+  # Voronoi
+  v <- terra::voronoi(x = terra::vect(train), bnd = map)
+  v <- st_as_sf(v)
+  p1 <- st_intersection(v, test)$vble
+  rmse1[k] <- RMSE(test$vble, p1)
+  # Nearest neighbors
+  nn <-
+    gstat(
+      formula = vble ~ 1,
+      locations = train,
+      nmax = 5,
+      set = list(idp = 0)
+    )
+  p2 <- predict(nn, test)$var1.pred
+  rmse2[k] <- RMSE(test$vble, p2)
+  # IDW
+  gs <-
+    gstat(
+      formula = vble ~ 1,
+      locations = train,
+      nmax = nrow(train),
+      set = list(idp = 1)
+    )
+  p3 <- predict(gs, test)$var1.pred
+  rmse3[k] <- RMSE(test$vble, p3)
+  # Ensemble (weights are inverse RMSE so lower RMSE has higher weight)
+  w <- 1 / c(rmse1[k], rmse2[k], rmse3[k])
+  weights <- w / sum(w)
+  p4 <- p1 * weights[1] + p2 * weights[2] + p3 * weights[3]
+  rmse4[k] <- RMSE(test$vble, p4)
+}
+```
+
+
+```{r}
+# RMSE obtained for each of the 5 splits
+data.frame(
+  voronoi = rmse1,
+  near.neigh = rmse2,
+  IDW = rmse3,
+  ensemble = rmse4
+)
+
+# Average RMSE over the 5 splits
+data.frame(
+  voronoi = mean(rmse1),
+  near.neigh = mean(rmse2),
+  IDW = mean(rmse3),
+  ensemble = mean(rmse4)
+)
+
+data.frame(
+  voronoi = mean(rmse1),
+  near.neigh = mean(rmse2),
+  IDW = mean(rmse3),
+  ensemble = mean(rmse4)
+) %>% stack %>% 
+  ggplot(aes(values, reorder(ind, values))) +
+  geom_col(width = 0.5) +
+  labs(x = "Average RMSE, following 5-fold cv", y = "Prediction methods (ranked)")
+```
+
+
+---
+
+# Geostatistical models: Geostatistical data. Malaria in The Gambia
+
+- [link](https://www.paulamoraga.com/tutorial-geostatistical-data/)
+
+```{r}
+library(geoR)
+data(gambia)
+dt_g <- as.data.table(gambia)
+```
+
+- `x`: x coordinate of the village (UTM),
+- `y`: y coordinate of the village (UTM),
+- `pos`: presence (1) or absence (0) of malaria in a blood sample taken from the child,
+- `age`: age of the child in days,
+- `netuse`: indicator variable denoting whether the child regularly sleeps under a bed net,
+- `treated`: indicator variable denoting whether the bed net is treated,
+- `green`: satellite-derived measure of the greenness of vegetation in the vicinity of the village,
+- `phc`: indicator variable denoting the presence or absence of a health center in the village.
+
+```{r}
+skimr::skim(gambia)
+summary(gambia)
+
+# number of unique regions:
+nrow(unique(gambia[, c("x", "y")]))
+# dt_g[, .N, .(x, y)]
+```
+
+
+## Prevalence
+
+```{r}
+library(dplyr)
+d <- group_by(gambia, x, y) %>% 
+  summarize(total = n(),
+            positive = sum(pos),
+            prev = positive/total)
+
+dt_d <- dt_g[, .(total = .N, positive = sum(pos)), .(x, y)][, prev := positive / total][]
+```
+
+
+
+## Transform coordinates
+
+```{r}
+library(sp)
+library(rgdal)
+sps <- SpatialPoints(d[, c("x", "y")], proj4string = CRS("+proj=utm +zone=28"))
+spst <- spTransform(sps, CRS("+proj=longlat +datum=WGS84"))
+```
+
+```{r}
+d[, c("long", "lat")] <- coordinates(spst)
+head(d)
+
+dt_d[, `:=` (
+  long = coordinates(spst)[,1],
+  lat = coordinates(spst)[,2]
+)]
+```
+
+## Map prevalence
+
+```{r}
+library(leaflet)
+pal <- colorBin("viridis", bins = c(0, 0.25, 0.5, 0.75, 1))
+
+leaflet(dt_d) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircles(lng = ~ long,
+             lat = ~ lat,
+             color = ~ pal(prev)) %>%
+  addLegend("bottomright",
+            pal = pal,
+            values = ~ prev,
+            title = "Prevalence") %>%
+  addScaleBar(position = c("bottomleft"))
+```
+
+
+## Add environmental covariates
+
+
+```{r}
+library(raster)
+#nowadays we use the terra package instead
+
+# get the altitude data for Gambia
+r <- getData(name = 'alt', country = 'GMB', mask = TRUE)
+```
+
+```{r}
+pal <- colorNumeric("viridis", values(r), na.color = "transparent")
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addRasterImage(r, colors = pal, opacity = 0.5) %>%
+  addLegend("bottomright",
+            pal = pal,
+            values = values(r),
+            title = "Altitude") %>%
+  addScaleBar(position = c("bottomleft"))
+```
+
+```{r}
+d$alt <- extract(r, d[, c("long", "lat")])
+dt_d[, alt := extract(r, dt_d[, .(long, lat)])]
+```
+
+
+```{r}
+head(d)
+# head(dt_d)
+```
+
+## Modelling
+
+- $S(x_i)$ indicates a spatial random effect that follows a zero-mean Gaussian process with a Matern covariance function
+
+### Build mesh
+
+- build a triangulation mesh that covers The Gambia over which to make the random field discretization
+- function _inla.mesh.2d()_
+    - `loc`
+    - `max.edge`
+    - `cutoff`
+
+
+```{r}
+library(INLA)
+coo <- cbind(d$long, d$lat)
+mesh <- inla.mesh.2d(loc = coo,
+                     max.edge = c(0.1, 5),
+                     cutoff = 0.01)
+# number of vertices
+mesh$n
+
+plot(mesh)
+points(coo, col = "red")
+```
+
+
+### Build the SPDE model on the mesh
+
+- function _inla.spde2.matern()_
+
+```{r}
+spde <- inla.spde2.matern(mesh = mesh, alpha = 2)
+```
+
+### Index set
+
+```{r}
+indexs <- inla.spde.make.index(name = "s", n.spde = spde$n.spde)
+lengths(indexs)
+```
+
+### Projector matrix
+
+
+```{r}
+A <- inla.spde.make.A(mesh = mesh, loc = coo)
+```
+
+
+### Prediction data
+
+- add the elevetion/altitude data (object `r`)
+
+```{r}
+dp <- rasterToPoints(r)
+dim(dp)
+
+ra <- aggregate(r, fact = 5, fun = mean)
+
+dp <- rasterToPoints(ra)
+dim(dp)
+
+coop <- dp[, c("x", "y")]
+```
+
+### Projection matrix
+
+
+```{r}
+Ap <- inla.spde.make.A(mesh = mesh, loc = coop)
+```
+
+
+### Stack data for estimation and prediction
+
+- function _inla.stack()_
+    - `tag`
+    - `data`
+    - `A`
+    - `effects`
+
+```{r}
+# stack for estimation stk.e
+stk.e <- inla.stack(
+  tag = "est",
+  data = list(y = d$positive, numtrials = d$total),
+  A = list(1, A),
+  effects = list(data.frame(b0 = 1, cov = d$alt), s = indexs)
+)
+
+# stack for prediction stk.p
+stk.p <- inla.stack(
+  tag = "pred",
+  data = list(y = NA, numtrials = NA),
+  A = list(1, Ap),
+  effects = list(data.frame(b0 = 1, cov = dp[, 3]), s = indexs)
+)
+
+# stk.full has stk.e and stk.p
+stk.full <- inla.stack(stk.e, stk.p)
+```
+
+
+### Model formula
+
+```{r}
+formula <- y ~ 0 + b0 + cov + f(s, model = spde)
+```
+
+### Fit model
+
+```{r}
+res <- inla(
+  formula,
+  family = "binomial",
+  Ntrials = numtrials,
+  control.family = list(link = "logit"),
+  data = inla.stack.data(stk.full),
+  control.predictor = list(
+    compute = TRUE,
+    link = 1,
+    A = inla.stack.A(stk.full)
+  )
+)
+```
+
+```{r}
+summary(res)
+```
+
+- results for `cov` in fixed effects
+    - malaria decreases with altitude (non significant as intervals `0.025quant` and `0.975quant` have 0 inbetween)
+
+
+## Mapping malaria prevalence
+
+```{r}
+index <- inla.stack.index(stack = stk.full, tag = "pred")$data
+```
+
+```{r}
+prev_mean <- res$summary.fitted.values[index, "mean"]
+prev_ll <- res$summary.fitted.values[index, "0.025quant"]
+prev_ul <- res$summary.fitted.values[index, "0.975quant"]
+```
+
+```{r}
+# raterize to show as a raster in a map instead of as a grid of points
+r_prev_mean <- rasterize(x = coop,
+                         y = ra,
+                         field = prev_mean,
+                         fun = mean)
+```
+
+```{r}
+pal <- colorNumeric("viridis", c(0, 1), na.color = "transparent")
+
+# leaflet() %>% 
+#   addProviderTiles(providers$CartoDB.Positron) %>%
+#   addRasterImage(r_prev_mean, colors = pal, opacity = 0.5) %>%
+#   addLegend(
+#     "bottomright",
+#     pal = pal,
+#     values = values(r_prev_mean),
+#     title = "Prevalence"
+#   ) %>%
+#   addScaleBar(position = c("bottomleft"))
+```
+

@@ -1,0 +1,249 @@
+---
+output: 
+  bookdown::html_document2:
+    theme: flatly
+    css: "style.css"
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: no
+    number_sections: true
+    code_download: true
+    code_folding: show
+title: "Making maps with R"
+date: "Start: 22/03/2023"
+author:
+  name: Joao Malato
+  affiliation: Instituto de Medicina Molecular & Immune-Stats
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE, 
+                      fig.align = "center",
+                      fig.asp = 0.618,
+                      fig.width = 10,
+                      dpi = 120, 
+                      out.width = "75%")
+```
+
+# Description {-}
+
+
+
+# Libraries {-}
+
+```{r}
+library(here)
+library(data.table)
+library(magrittr)
+library(ggplot2)
+library(scales)
+library(colorspace)
+library(janitor)
+theme_set(theme_bw())
+
+```
+
+# Making maps with R
+
+- [link](https://www.paulamoraga.com/book-gds/25-spatial-makingmaps.html)
+
+Data from the North Carolina data
+
+```{r}
+library(sf)
+nameshp <- system.file("shape/nc.shp", package = "sf")
+d <- st_read(nameshp, quiet = TRUE)
+# transform
+d <- st_as_sf(d)
+
+# infant deaths 1974
+d$vble <- d$SID74
+# infant deaths 1979
+d$vble2 <- d$SID79
+head(d)
+```
+
+# ggplot2
+
+```{r}
+library(ggplot2)
+library(viridis)
+# ggplot(d) +
+#   geom_sf(aes(fill = vble)) +
+#   scale_fill_viridis() + 
+#   theme_bw()
+ggplot(d) +
+  geom_sf(aes(fill = vble)) +
+  scale_fill_continuous_sequential() + 
+  theme_bw() +
+  theme(
+    legend.position = "top"
+  )
+```
+
+## plotly
+
+```{r}
+library(plotly)
+g <- ggplot(d) +
+  geom_sf(aes(fill = vble), color = "gray5", size = 0.1) +
+  scale_fill_continuous_sequential() + 
+  theme_bw()
+ggplotly(g)
+```
+
+
+# leaflet
+
+The sf object that we pass to _leaflet()_ needs to have a geographic coordinate reference system (CRS) (EPSG code 4326) indicating latitude and longitude. Here, we use the _st_transform()_ function of `sf` to transform the data d which has CRS given by EPSG code 4267 to CRS with EPSG code 4326.
+
+
+
+```{r}
+st_crs(d)
+```
+
+```{r}
+library(leaflet)
+
+pal <- colorNumeric(palette = "YlOrRd", domain = d$vble)
+
+l <- leaflet(d) %>% 
+  addTiles() %>%
+  addPolygons(
+    color = "white",
+    fillColor = ~ pal(vble),
+    fillOpacity = 0.8
+  ) %>%
+  addLegend(pal = pal,
+            values = ~ vble,
+            opacity = 0.8)
+l
+```
+
+
+```{r}
+l %>% addMiniMap()
+```
+
+## Save interactive figure as png
+
+```{r, eval=FALSE}
+# Saves map.html
+
+library(htmlwidgets)
+saveWidget(widget = l, file = here::here("results/figures", paste(Sys.Date(), "map.html", sep = "_")))
+
+# Takes a screenshot of the map.html created and saves it as map.png
+library(webshot)
+# webshot::install_phantomjs()
+webshot(url = here::here("results/figures", paste(Sys.Date(), "map.html", sep = "_")), file = here::here("results/figures", paste(Sys.Date(), "map.png", sep = "_")))
+```
+
+
+# mapview
+
+```{r}
+library(mapview)
+mapview(d, zcol = "vble")
+```
+
+```{r}
+library(RColorBrewer)
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+# version 2
+mapview(d,
+        zcol = "vble",
+        map.types = "CartoDB.DarkMatter",
+        col.regions = pal)
+```
+
+```{r}
+# version 3
+map1 <- mapview(d, zcol = "vble")
+leaflet::addMiniMap(map1@map)
+```
+
+
+
+# Side by side plots with mapview
+
+```{r}
+library(leaflet.extras2) # similar to patchwork
+m1 <- mapview(d, zcol = "vble")
+m2 <- mapview(d, zcol = "vble2")
+m1 | m2
+```
+
+
+# Synchronized maps with leafsync
+
+```{r}
+m1 <- mapview(d, zcol = "vble")
+m2 <- mapview(d, zcol = "vble2")
+m <- leafsync::sync(m1, m2)
+m
+```
+
+
+```{r, eval=FALSE}
+htmltools::save_html(html = m, 
+                     file = here::here("results/figures", paste(Sys.Date(), "map-side-by-side.html", sep = "_")))
+```
+
+
+# `tmap`
+
+```{r}
+library(tmap)
+
+# define the mode
+tmap_mode("plot") # static
+# tmap_mode("view") # interactive
+
+tm_shape(d) + 
+  tm_polygons("vble") #+
+  # tm_shape(st_centroid(d)) + 
+  # tm_dots("vble")
+```
+
+# Mobility flows with `flowmapblue`
+
++ To map mobility data
++ data from cellphone companies
+
+```{r}
+# devtools::install_github("FlowmapBlue/flowmapblue.R")
+library(flowmapblue)
+```
+
+```{r}
+# data frame 1
+locations <- data.frame(
+  id = c(1, 2, 3),
+  name = c("New York", "London", "Rio de Janeiro"),
+  lat = c(40.713543, 51.507425, -22.906241),
+  lon = c(-74.011219, -0.127738, -43.180244)
+)
+locations
+
+# atadate frame 2
+flows <- data.frame(
+  origin = c(1, 2, 3, 2, 1, 3),
+  dest = c(2, 1, 1, 3, 3 , 2),
+  count = c(42, 51, 50, 40, 22, 42)
+)
+flows
+```
+
+```{r}
+# final plot of transitions fromand to the 3 destinations
+# flowmapblue(locations = locations, flows = flows, mapboxAccessToken = NULL, clustering = TRUE, darkMode = TRUE, animation = TRUE)
+```
+
+
+

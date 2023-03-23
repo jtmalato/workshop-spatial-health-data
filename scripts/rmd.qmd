@@ -1,0 +1,71 @@
+---
+title: "Untitled"
+format:
+  html:
+    theme:
+      light: flatly
+      dark: darkly
+    # theme: darkly
+    # theme: quartz
+    fontsize: 1.1em
+    linestretch: 1.5
+editor: visual
+author: "Joao Malato"
+affiliation: "IMM, Immune-Stats"
+date: "`r Sys.Date()`"
+toc: true
+toc-title: ""
+toc-depth: 2
+toc-location: left
+number-sections: true
+number-depth: 3
+code-copy: true
+code-overflow: wrap
+---
+
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+```{r}
+
+```
+
+$$
+\frac{\partial \mathrm C}{ \partial \mathrm t } + \frac{1}{2}\sigma^{2} \mathrm S^{2}
+\frac{\partial^{2} \mathrm C}{\partial \mathrm C^2}
+  + \mathrm r \mathrm S \frac{\partial \mathrm C}{\partial \mathrm S}\ =
+  \mathrm r \mathrm C 
+$$ {#eq-black-scholes}
+
+@eq-black-scholes
+
+::: solution
+$$
+y = mx + b
+$$
+:::
+
+::: column-margin
+We know from *the first fundamental theorem of calculus* that for $x$ in $[a, b]$:
+
+$$\frac{d}{dx}\left( \int_{a}^{x} f(u)\,du\right)=f(x).$$
+:::

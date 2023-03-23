@@ -1,0 +1,682 @@
+---
+output: 
+  bookdown::html_document2:
+    theme: flatly
+    css: "style.css"
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: no
+    number_sections: true
+    code_download: true
+    code_folding: show
+title: "Day 01"
+date: "Start: 22/03/2023"
+author:
+  name: Joao Malato
+  affiliation: Instituto de Medicina Molecular & Immune-Stats
+---
+
+# Libraries {-}
+
+
+```{r}
+library(here)
+library(data.table)
+library(magrittr)
+library(ggplot2)
+library(scales)
+library(colorspace)
+library(janitor)
+theme_set(theme_bw())
+```
+
+
+# Introduction
+
+- [link](https://www.paulamoraga.com/book-gds/21-spatial-intro.html)
+
+# Types of data
+
+## Areal data
+
+```{r}
+library(sf)
+library(mapview)
+d <- st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+mapview(d, zcol = "SID74")
+```
+
+
+```{r}
+library(spData)
+library(ggplot2)
+d <- st_read(system.file("shapes/columbus.shp", package = "spData"), quiet = TRUE)
+ggplot(d) + geom_sf(aes(fill = INC))
+```
+
+
+```{r}
+library(terra)
+d <- rast(system.file("ex/elev.tif", package = "terra"))
+plot(d)
+```
+
+Best packages to use with raster data:
+  + `sf` 
+  + `terra`
+
+
+## Geostatistical data
+
++ Specific (fixed) monitoring points at fixed locations
+
++ data from the `sp` package
+
+```{r}
+library(sp)
+library(sf)
+library(mapview)
+
+data(meuse)
+meuse <- st_as_sf(meuse, coords = c("x", "y"), crs = 28992)
+mapview(meuse, zcol = "lead",  map.types = "CartoDB.Voyager")
+```
+
+```{r}
+# mapview(properties, zcol = "prpsqm")
+```
+
+
+We are essentially measuring price per square meter (Euros/square meter) of a specific set of apartments in Athens, Greece, in 2017.
+
+
+```{r}
+library(malariaAtlas)
+d <- getPR(country = "Zimbabwe", species = "BOTH")
+autoplot(d)
+```
+
+
+## Point patterns
+
++ Data points that arise at random
+Examples:
+  - fires
+  - diseases
+
+
++ data from `spatstat.data` package
+
+```{r}
+library(spatstat)
+# plot(spatstat.data::bdspots)
+plot(clmfires, use.marks = FALSE, pch = ".")
+```
+
++ We could estimate the intensity of fires for example
+
+```{r}
+plot(humberside)
+```
+
++ Look into clusters and infer on the results
+
+# Spatio-temporal data
+
+
+```{r}
+devtools::install_github("Paula-Moraga/SpatialEpiApp")
+library(SpatialEpiApp)
+library(sf)
+library(ggplot2)
+library(viridis)
+
+# map
+pathshp <- system.file("SpatialEpiApp/data/Ohio/fe_2007_39_county/fe_2007_39_county.shp",
+package = "SpatialEpiApp")
+map <- st_read(pathshp, quiet = TRUE)
+
+# data
+namecsv <- "SpatialEpiApp/data/Ohio/dataohiocomplete.csv"
+d <- read.csv(system.file(namecsv, package = "SpatialEpiApp"))
+
+# data are disaggregated by gender and race
+# aggregate to get population in each county and year
+d <- aggregate(x = d$n, by = list(county = d$NAME, year = d$year), FUN = sum)
+names(d) <- c("county", "year", "population")
+
+# join map and data
+mapst <- dplyr::left_join(map, d, by = c("NAME" = "county"))
+
+# map population by year
+# facet_wrap() splits the data into subsets and create multiple plots
+ggplot(mapst, aes(fill = log(population))) + geom_sf() + 
+  facet_wrap(~ year, ncol = 7) + scale_fill_viridis("log(population)") +
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank(), axis.ticks = element_blank())
+```
+
+
+
+# Spatial functional data
+
+```{r}
+library(sf)
+library(mapview)
+library(geoFourierFDA)
+library(rnaturalearth)
+
+# Map Canada
+map <- rnaturalearth::ne_states("Canada", returnclass = "sf")
+
+# Coordinates of stations
+d <- data.frame(canada$m_coord)
+d$location <- attr(canada$m_coord, "dimnames")[[1]]
+d <- st_as_sf(d, coords = c("W.longitude", "N.latitude"))
+st_crs(d) <- 4326
+
+# Plot Canada map and location of stations
+ggplot(map) + geom_sf() + geom_sf(data = d, size = 6) +
+  geom_sf_label(data = d, aes(label = location), nudge_y = 2)
+```
+
+
+```{r}
+# Temperature of each station over time
+d <- data.frame(canada$m_data)
+d$time <- 1:nrow(d)
+
+# Pivot data d from wide to long
+df <- tidyr::pivot_longer(data = d,
+                   cols = names(d)[-which(names(d) == "time")], # columns to pivot into longer format
+                   names_to = "variable", # name of the new column with the column names of the original data
+                   values_to = "value") # name of the new column with the values of the original data
+
+# Plot temperature of each station over time
+ggplot(df, aes(x = time, y = value)) + geom_line(aes(color = variable))
+```
+
+---
+
+# Spatial data in R
+
+- [link](https://www.paulamoraga.com/book-gds/22-spatial-spatialdatainR.html)
+
+## Vector data
+
++ `sf` package is the one we use here
+
+### Shapefile
+
+Vector spatial data such as points, lines and polygons are often represented using a data storage format called shapefile. A shapefile is not a single file but a collection of related files. A shapefile has three mandatory files:
+
+  - `shp`: contains the geometry data,
+  - `shx`: positional index of the geometry data that allows to seek forwards and backwards the .shp file,
+  - `dbf`: stores the attributes for each shape.
+
+Other files that can form a shapefile include the following:
+
+  - `prj`: plain text file describing the projection,
+  - `sbn` and .sbx: spatial index of the geometry data,
+  - `shp.xml`: geospatial metadata in XML format.
+
+Therefore, when working with a shapefile, it is important to obtain all files that compose the shapefile and not only the .shp file with the geometry data.
+
+```{r}
+library(sf)
+
+# we are reading everything
+pathshp <- system.file("shape/nc.shp", package = "sf")
+
+map <- st_read(pathshp, quiet = TRUE)
+
+class(map)
+
+
+head(map)
+```
+
+- The _geometry_ column gives the shape
+
+```{r}
+plot(map)
+```
+
+
+## Raster data
+
+To work with regions, divided into rectangles/squares
+
+We use
+  - `raster` package (old one)
+  - [`terra`](https://rspatial.org/terra) is the new package (the one we shold use)
+  - [link](https://rspatial.org/pkg/index.html)
+
+
+### GeoTIFF
+
+
+```{r}
+library(terra)
+pathraster <- system.file("ex/elev.tif", package = "terra")
+r <- terra::rast(pathraster)
+r
+plot(r)
+```
+
+## Coordinate Reference Systems (CRS)
+
+
+### CRS with R
+
+- `sf::st_crs()` 
+- `terra::crs()`
+
+
+```{r}
+library(sf)
+pathshp <- system.file("shape/nc.shp", package = "sf")
+map <- st_read(pathshp, quiet = TRUE)
+
+# Get CRS
+# st_crs(map)
+# Transform CRS
+map2 <- st_transform(map, crs = "EPSG:4326")
+# Get CRS
+# st_crs(map2)
+```
+
+
+
+---
+
+# Follow up exercise
+
+## Joining data
+
+```{r}
+# Map
+library(rnaturalearth)
+map <- ne_countries(returnclass = "sf")
+plot(map)
+```
+
+- `wbstats` package has indicators for each country
+
+```{r}
+# Download data from each of the countries
+library(wbstats)
+
+# determine pattern
+indicators <- wb_search(pattern = "pollution")
+d <- wb_data(indicator = "EN.ATM.PM25.MC.M3", start_date = 2016, end_date = 2016)
+head(d)
+```
+
+
+```{r}
+# Join
+# library(dplyr)
+# map1 <- left_join(map, d, by = c("iso_a3" = "iso3c"))
+map1 <- merge(map, d, by.x = "iso_a3", by.y = "iso3c")
+
+# Plot
+library(ggplot2)
+library(viridis)
+library(ggthemes)
+ggplot(map1) + 
+  geom_sf(aes(fill = EN.ATM.PM25.MC.M3), color = "white") + 
+  colorspace::scale_fill_continuous_sequential(palette = "Purple-Blue") +
+  # scale_fill_viridis() +
+  theme_map() +
+  theme(
+    legend.position = "bottom",
+    legend.justification = "center"
+  ) +
+  # guides(fill = guide_legend(title.position = "top")) +
+  coord_sf(crs = "+proj=robin", expand = FALSE)
+
+```
+
+
+---
+
+# Areal data (follow up)
+
+## Spatial risk modelling
+
+- [link](https://www.paulamoraga.com/book-gds/34-arealdata-modeling-example.html#Spatial_modeling_of_disease_risk_using_areal_data)
+
+- [Example](https://www.envhealthatlas.co.uk/eha/Lung/) used in this exercise to see the geographical patterns of female lung cancer in the UK
+  - it compares the risk _relatively_ to the overall risk (absolute) of the country
+- [Example 2](https://atlas.cancer.org.au/app)
+
+
+## Spatial modeling of risk of lung cancer in Pennsylvania
+
+
+### Data and map
+
+```{r}
+library(SpatialEpi)
+# load the data
+data(pennLC)
+class(pennLC)
+```
+
+```{r}
+head(pennLC$geo)
+
+# data of interest
+head(pennLC$data)
+
+# proportions
+head(pennLC$smoking)
+
+# spetial polygon with counties of Pensilvania
+pennLC$spatial.polygon
+```
+
+`pennLC$spatial.polygon` is from package `sp`, we need to transform it into a `sf` file (function _st_as_sf()_)
+
+```{r}
+library(sf)
+map <- st_as_sf(pennLC$spatial.polygon)
+countynames <- sapply(slot(pennLC$spatial.polygon, "polygons"), function(x){slot(x, "ID")})
+```
+
+
+```{r}
+map$county <- countynames
+head(map)
+```
+
+```{r}
+library(ggplot2)
+ggplot(map) + geom_sf()
+```
+
+
+### Observed cases
+
+```{r}
+library(dplyr)
+# add the observed number of cases
+d <- group_by(pennLC$data, county) %>% summarize(Y = sum(cases))
+head(d)
+```
+
+
+### Expected cases
+
+We can now calculate the expected number of cases
+
+```{r}
+pennLC$data <- pennLC$data[order(pennLC$data$county, pennLC$data$race, pennLC$data$gender, pennLC$data$age), ]
+```
+
+
++ The **number of strata** is set to 16 since there are 2 races, 2 genders and 4 age groups for each county ($2 \times 2 \times 4 = 16$).
+
+```{r}
+# from package SpatialEpi
+E <- expected(population = pennLC$data$population, 
+              cases = pennLC$data$cases, 
+              n.strata = 16)
+E
+```
+
+```{r}
+d$E <- E
+
+head(d)
+```
+
+
+### Effect of smoking (Smokers proportion)
+
+Adding the smoking data (proportions) into the dataset 
+
+```{r}
+d <- left_join(d, pennLC$smoking, by = "county")
+```
+
+
+### Standardized Mortality Ratios
+
+Estimate the Standardized Mortality Ratios
+
+```{r}
+d$SMR <- d$Y/d$E
+
+head(d)
+
+d %>% 
+  mutate(SMR1 = SMR-1) %>% 
+  ggplot(aes(SMR1, reorder(county, SMR))) +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_col(aes(fill = SMR1 > 0)) +
+  scale_x_continuous(limits = c(-1, 1), expand = expansion(0,0)) +
+  theme_bw() +
+  theme(
+    legend.position = "none"
+  )
+```
+
+### Mapping SMR
+
+
+```{r}
+library(dplyr)
+map <- left_join(map, d, by = "county")
+head(map)
+```
+
+```{r}
+library(mapview)
+library(RColorBrewer)
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+pal <- colorspace::sequential_hcl(palette = "Blu-Yl", n = 50)
+
+mapview(
+  map,
+  zcol = "SMR",
+  color = "white",
+  alpha.regions = 0.8,
+  layer.name = "SMR",
+  col.regions = pal,
+  map.types = "CartoDB.Positron"
+)
+```
+
+- We can personalise the map to show certain options only
+
+```{r}
+library(mapview)
+library(RColorBrewer)
+library(leafpop)
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+mapviewOptions(fgb = FALSE)
+
+popuptable <-
+  leafpop::popupTable(
+    dplyr::mutate_if(map, is.numeric, round, digits = 2),
+    zcol = c("county", "Y", "E", "smoking", "SMR"),
+    row.numbers = FALSE,
+    feature.id = FALSE
+  )
+mapview(
+  map,
+  zcol = "SMR",
+  color = "gray",
+  col.regions = pal,
+  highlight = leaflet::highlightOptions(weight = 4),
+  popup = popuptable
+)
+
+
+```
+
+
+
+### Modelling
+
+- Smooth analysis
+- 
+- uncertainty associated to the covs of the risk
+
+Let $Y_i$ and $E_i$ be the observed and expected number of disease cases, respectively, and let $\theta_i$ be the relative risk for county $i=1,.,n$. The model is specified as follows:
+
+$$Y_i|\theta_i \sim Poisson(E_i\times \theta_i), i=1,.,n,$$
+
+$$\log(\theta_i) = \beta_0 + \beta_1 \times smoking_i + u_i + v_i$$
+
+where $\beta_0$ is the intercept and $\beta_1$ is the coefficient of the covariate smokers proportion. $u_i$ is a structured spatial effect, $u_i | \mathbf{u_i} \sim N(u_{\delta}_{i}, \frac{1}{})$ (intrinsic conditionally autoregressive model (CAR)), and $v_i$ is an unstructured spatial effect, $v_i ??? N(0,1/??v)$.
+
+
+### Neighbourhood matrix
+
+
+```{r}
+library(spdep)
+library(INLA)
+
+nb <- poly2nb(map)
+head(nb)
+```
+
+```{r}
+nb2INLA("map.adj", nb)
+g <- inla.read.graph(filename = "map.adj")
+```
+
+
+### Inference using `INLA`
+
+```{r}
+map$re_u <- 1:nrow(map)
+map$re_v <- 1:nrow(map)
+```
+
+```{r}
+formula <- Y ~ smoking + f(re_u, model = "besag", graph = g, scale.model = TRUE) + f(re_v, model = "iid")
+# besag is the conditional autorregressive model
+```
+
+Then, we fit the model using the _inla()_ function with the default priors in `INLA`. We specify the _formula_, _family_, _data_, and the expected counts ( _E_ ), and set _control.predictor = list(compute = TRUE)_ and _control.compute = list(return.marginals.predictor = TRUE)_ to compute the posterior means of the predictors.
+
+```{r}
+# results
+res <- inla(
+  formula,
+  family = "poisson",
+  data = map,
+  E = E,
+  control.predictor = list(compute = TRUE),
+  control.compute = list(return.marginals.predictor = TRUE)
+)
+```
+
+
+### Results
+
+
+
+```{r}
+summary(res)
+```
+
+```{r}
+# look at the estimated risks
+res$summary.fitted.values
+
+map$RR <- res$summary.fitted.values[, "mean"] # relative risk
+map$LL <- res$summary.fitted.values[, "0.025quant"] # lower limit 95% CI
+map$UL <- res$summary.fitted.values[, "0.975quant"] # upper limit 95% CI
+
+# plot(res)
+```
+
+### Mapping disease risk
+
+```{r}
+library(mapview)
+library(RColorBrewer)
+library(leafpop)
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+mapviewOptions(fgb = FALSE)
+mapview(
+  map,
+  zcol = "RR",
+  color = "gray",
+  col.regions = pal,
+  highlight = leaflet::highlightOptions(weight = 4),
+  popup = leafpop::popupTable(
+    dplyr::mutate_if(map, is.numeric, round, digits = 2),
+    zcol = c("county", "Y", "E", "smoking", "SMR", "RR", "LL", "UL"),
+    row.numbers = FALSE,
+    feature.id = FALSE
+  )
+)
+```
+
+### Comparing SMR and RR maps
+
+
+```{r}
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+at <- seq(min(map$SMR), max(map$SMR), length.out = 8)
+
+m1 <- mapview(map, zcol = "SMR", color = "gray", col.regions = pal, at = at)
+m2 <- mapview(map, zcol = "RR", color = "gray", col.regions = pal, at = at)
+m <- leafsync::sync(m1, m2)
+m
+```
+
+All areal values have been smoothed into being closer to 1.
+
+### Exceedance probabilities
+
+Question: What is the probability that the risk exceeds X?
+
+```{r}
+c <- 1.2
+marg <- res$marginals.fitted.values[[51]]
+# 1 - probability that the risk is less that c
+1 - inla.pmarginal(q = c, marginal = marg)
+```
+
+
+```{r}
+library(ggplot2)
+marginal <- inla.smarginal(res$marginals.fitted.values[[51]])
+marginal <- data.frame(marginal)
+ggplot(marginal, aes(x = x, y = y)) + 
+  geom_line() +
+  labs(x = expression(theta[1]), y = "Density") +
+  geom_vline(xintercept = 1.2, col = "black") + 
+  theme_bw()
+```
+
+```{r}
+c <- 1.2
+map$exc <- sapply(res$marginals.fitted.values,
+FUN = function(marg){1 - inla.pmarginal(q = c, marginal = marg)})
+```
+
+```{r}
+c <- 1.2
+map$exc <- sapply(res$marginals.fitted.values,
+FUN = function(marg){1 - inla.pmarginal(q = c, marginal = marg)})
+```
+
+```{r}
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+mapview(map, zcol = "exc", color = "gray", col.regions = pal, map.types = "CartoDB.Positron")
+```
+
+Answer: Not very likely that these areas will exceed 1.2.
+
+
+
